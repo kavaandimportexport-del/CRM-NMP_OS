@@ -370,11 +370,21 @@ async def list_leads(user: dict = Depends(get_current_user), status: Optional[st
     if status: q["status"] = status
     if lead_type: q["lead_type"] = lead_type
     if assigned: q["assigned_to"] = assigned
-    leads = await db.leads.find(q).sort("created_at", -1).to_list(1000)
+    leads = await db.leads.find(q).sort("created_at", -1).limit(1000).to_list(1000)
+    if not leads:
+        return []
+    # Batch quotation counts in a single aggregation
+    lead_ids = [str(l["_id"]) for l in leads]
+    pipeline = [
+        {"$match": {"lead_id": {"$in": lead_ids}}},
+        {"$group": {"_id": "$lead_id", "count": {"$sum": 1}}},
+    ]
+    counts_doc = await db.quotations.aggregate(pipeline).to_list(2000)
+    counts = {c["_id"]: c["count"] for c in counts_doc}
     result = []
     for l in leads:
         l = serialize(l)
-        l["quotation_count"] = await db.quotations.count_documents({"lead_id": l["id"]})
+        l["quotation_count"] = counts.get(l["id"], 0)
         l["health_score"] = lead_health_score(l)
         result.append(l)
     return result
@@ -744,13 +754,14 @@ async def export_excel(user: dict = Depends(require_roles("super_admin"))):
     ws.title = "Leads"
     headers = ["lead_name","company_name","contact_person","mobile","email","city","state","lead_source","lead_type","status","priority","expected_deal_value","probability","next_follow_up","competitor","created_at"]
     ws.append([h.replace("_"," ").title() for h in headers])
-    async for l in db.leads.find():
+    async for l in db.leads.find({}, projection={h: 1 for h in headers}).limit(10000):
         ws.append([str(l.get(h, "") or "") for h in headers])
     # Quotations
     ws2 = wb.create_sheet("Quotations")
     q_headers = ["quotation_number","lead_id","status","subtotal","discount","tax","total","items_count","created_by_name","created_at"]
     ws2.append([h.replace("_"," ").title() for h in q_headers])
-    async for q in db.quotations.find():
+    q_proj = {"quotation_number": 1, "lead_id": 1, "status": 1, "totals": 1, "items": 1, "created_by_name": 1, "created_at": 1}
+    async for q in db.quotations.find({}, projection=q_proj).limit(10000):
         totals = q.get("totals", {})
         row = [q.get("quotation_number",""), q.get("lead_id",""), q.get("status",""),
                totals.get("subtotal",0), totals.get("discount",0), totals.get("tax",0), totals.get("total",0),
@@ -760,25 +771,25 @@ async def export_excel(user: dict = Depends(require_roles("super_admin"))):
     ws3 = wb.create_sheet("Inventory")
     i_headers = ["sku","product_name","brand","category","cost_price","selling_price","mrp","gst_rate","stock","warehouse"]
     ws3.append([h.replace("_"," ").title() for h in i_headers])
-    async for it in db.inventory.find():
+    async for it in db.inventory.find({}, projection={h: 1 for h in i_headers}).limit(10000):
         ws3.append([str(it.get(h, "") or "") for h in i_headers])
     # Employees
     ws4 = wb.create_sheet("Employees")
     e_headers = ["name","email","mobile","role","department","designation","territory","status","created_at"]
     ws4.append([h.replace("_"," ").title() for h in e_headers])
-    async for e in db.users.find():
+    async for e in db.users.find({}, projection={h: 1 for h in e_headers}).limit(10000):
         ws4.append([str(e.get(h, "") or "") for h in e_headers])
     # Tasks
     ws5 = wb.create_sheet("Tasks")
     t_headers = ["title","task_type","status","lead_id","assigned_to","due_date","created_at"]
     ws5.append([h.replace("_"," ").title() for h in t_headers])
-    async for t in db.tasks.find():
+    async for t in db.tasks.find({}, projection={h: 1 for h in t_headers}).limit(10000):
         ws5.append([str(t.get(h, "") or "") for h in t_headers])
     # GPS Visits
     ws6 = wb.create_sheet("GPS Visits")
     v_headers = ["user_name","lead_id","gps_lat","gps_lng","check_in_at","check_out_at","distance_km","customer_name","status"]
     ws6.append([h.replace("_"," ").title() for h in v_headers])
-    async for v in db.gps_visits.find():
+    async for v in db.gps_visits.find({}, projection={h: 1 for h in v_headers}).limit(10000):
         ws6.append([str(v.get(h, "") or "") for h in v_headers])
 
     buf = BytesIO()
