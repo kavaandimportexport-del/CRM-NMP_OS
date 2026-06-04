@@ -2,12 +2,13 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   House, Lightning, Users, Package, GraduationCap,
-  BookOpen, ChartBar, SignOut, Headphones, ClipboardText, Books
+  BookOpen, ChartBar, SignOut, Headphones, ClipboardText, Books, Kanban,
 } from "@phosphor-icons/react";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: House, testid: "nav-dashboard" },
   { to: "/leads", label: "Leads", icon: Lightning, testid: "nav-leads" },
+  { to: "/pipeline", label: "Pipeline", icon: Kanban, testid: "nav-pipeline" },
   { to: "/tasks", label: "Tasks", icon: ClipboardText, testid: "nav-tasks" },
   { to: "/inventory", label: "Inventory", icon: Package, testid: "nav-inventory" },
   { to: "/employees", label: "Employees", icon: Users, testid: "nav-employees" },

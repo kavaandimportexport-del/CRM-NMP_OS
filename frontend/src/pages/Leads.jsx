@@ -39,6 +39,8 @@ const empty = {
   address: "", city: "", state: "",
   lead_source: "Website", lead_type: "Product Sale", visit_requirement: "Not Required",
   expected_deal_value: 0, priority: "Medium", status: "New", notes: "",
+  next_follow_up: "", follow_up_type: "Call", decision_maker: "", budget: 0,
+  expected_closure_date: "", competitor: "", probability: 25,
 };
 
 export default function Leads() {
@@ -53,7 +55,12 @@ export default function Leads() {
 
   const save = async () => {
     try {
-      await http.post("/leads", { ...form, expected_deal_value: Number(form.expected_deal_value) });
+      await http.post("/leads", {
+        ...form,
+        expected_deal_value: Number(form.expected_deal_value),
+        budget: Number(form.budget),
+        probability: Number(form.probability),
+      });
       toast.success("Lead created");
       setOpen(false); setForm(empty); load();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
@@ -108,6 +115,15 @@ export default function Leads() {
               <div className="md:col-span-2">
                 <Field label="Address"><Input value={form.address} onChange={(e)=>setForm({...form, address:e.target.value})} className="rounded-sm" /></Field>
               </div>
+              <Field label="Decision Maker"><Input value={form.decision_maker} onChange={(e)=>setForm({...form, decision_maker:e.target.value})} className="rounded-sm" data-testid="lead-decision-maker" /></Field>
+              <Field label="Budget"><Input type="number" value={form.budget} onChange={(e)=>setForm({...form, budget:e.target.value})} className="rounded-sm font-mono-data" /></Field>
+              <Field label="Expected Closure Date"><Input type="date" value={form.expected_closure_date} onChange={(e)=>setForm({...form, expected_closure_date:e.target.value})} className="rounded-sm" /></Field>
+              <Field label="Probability %"><Input type="number" min="0" max="100" value={form.probability} onChange={(e)=>setForm({...form, probability:e.target.value})} className="rounded-sm font-mono-data" /></Field>
+              <Field label="Competitor"><Input value={form.competitor} onChange={(e)=>setForm({...form, competitor:e.target.value})} className="rounded-sm" /></Field>
+              <Field label="Next Follow-up Date"><Input type="date" value={form.next_follow_up} onChange={(e)=>setForm({...form, next_follow_up:e.target.value})} className="rounded-sm" data-testid="lead-next-followup" /></Field>
+              <Field label="Follow-up Type">
+                <SelectField value={form.follow_up_type} onValueChange={(v)=>setForm({...form, follow_up_type:v})} options={["Call","WhatsApp","Email","Site Visit","Meeting"]} />
+              </Field>
               <div className="md:col-span-2">
                 <Field label="Notes"><Textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} className="rounded-sm" rows={3} /></Field>
               </div>

@@ -107,13 +107,23 @@ export default function LeadDetail() {
                 <Row k="Priority" v={lead.priority} />
                 <Row k="Visit" v={lead.visit_requirement} />
                 <Row k="Expected Value" v={inr(lead.expected_deal_value)} />
+                <Row k="Budget" v={lead.budget ? inr(lead.budget) : "—"} />
+                <Row k="Probability" v={`${lead.probability ?? 0}%`} />
               </Card>
-              <Card title="Address">
+              <Card title="Closure & Competition">
+                <Row k="Decision Maker" v={lead.decision_maker} />
+                <Row k="Closure Date" v={lead.expected_closure_date || "—"} />
+                <Row k="Closure Type" v={lead.closure_type || "—"} />
+                <Row k="Competitor" v={lead.competitor || "—"} />
+                <FollowUpEditor lead={lead} onDone={refresh} />
+              </Card>
+              <Card title="Address & Notes">
                 <p className="text-sm text-zinc-700">{lead.address || "—"}</p>
                 <p className="text-sm text-zinc-500 mt-1">{lead.city} {lead.state && `, ${lead.state}`}</p>
-              </Card>
-              <Card title="Notes">
-                <p className="text-sm text-zinc-700 whitespace-pre-line">{lead.notes || "—"}</p>
+                <div className="mt-3 pt-3 border-t border-zinc-100">
+                  <div className="overline text-zinc-500 mb-2">Notes</div>
+                  <p className="text-sm text-zinc-700 whitespace-pre-line">{lead.notes || "—"}</p>
+                </div>
               </Card>
             </div>
           </TabsContent>
@@ -161,6 +171,33 @@ const Row = ({ k, v }) => (
     <span className="text-zinc-900 font-medium">{v || "—"}</span>
   </div>
 );
+
+const FollowUpEditor = ({ lead, onDone }) => {
+  const [date, setDate] = useState(lead.next_follow_up || "");
+  const [type, setType] = useState(lead.follow_up_type || "Call");
+  const save = async () => {
+    try {
+      await http.put(`/leads/${lead.id}`, { next_follow_up: date, follow_up_type: type });
+      toast.success("Follow-up scheduled");
+      onDone();
+    } catch (_) { toast.error("Failed"); }
+  };
+  return (
+    <div className="mt-3 pt-3 border-t border-zinc-100">
+      <div className="overline text-zinc-500 mb-2">Next Follow-up</div>
+      <div className="flex gap-2">
+        <Input type="date" value={date?.slice(0,10) || ""} onChange={(e)=>setDate(e.target.value)} className="rounded-sm h-9 text-xs flex-1" data-testid="followup-date-input" />
+        <Select value={type} onValueChange={setType}>
+          <SelectTrigger className="rounded-sm h-9 w-[110px] text-xs" data-testid="followup-type-select"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {["Call","WhatsApp","Email","Site Visit","Meeting"].map((x)=><SelectItem key={x} value={x}>{x}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <Button onClick={save} size="sm" className="bg-rose-600 hover:bg-rose-700 rounded-sm w-full mt-2" data-testid="save-followup-btn">Save Follow-up</Button>
+    </div>
+  );
+};
 
 const ICON = { call: PhoneCall, whatsapp: ChatCircle, meeting: Buildings, note: Note,
   lead_created: Plus, status_change: CheckCircle, gps_visit: NavigationArrow, quotation_created: Receipt };
@@ -389,8 +426,18 @@ const TaskPanel = ({ leadId, tasks, onDone }) => {
 
 const QuotationPanel = ({ lead, quots, onDone }) => {
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState([{ product_name: "", quantity: 1, unit_price: 0, discount_pct: 0, gst_rate: 18 }]);
+  const [items, setItems] = useState([]);
+  const [extras, setExtras] = useState({ installation_charge: 0, freight_charge: 0, amc_charge: 0, misc_charge: 0 });
   const [terms, setTerms] = useState("50% advance, balance against delivery. Warranty as per brand.");
+
+  const addProduct = (p) => setItems((cur) => [...cur, { ...p, discount_pct: 0 }]);
+  const addBlank = () => setItems((cur) => [...cur, { sku: "", product_name: "", brand: "", quantity: 1, unit_price: 0, discount_pct: 0, gst_rate: 18 }]);
+  const removeItem = (i) => setItems((cur) => cur.filter((_, idx) => idx !== i));
+  const updItem = (i, k, v) => {
+    const a = [...items];
+    a[i][k] = (k === "product_name" || k === "sku" || k === "brand") ? v : Number(v) || 0;
+    setItems(a);
+  };
 
   const calc = () => {
     let sub=0, disc=0, tax=0;
@@ -400,17 +447,33 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
       const t = (line-d)*(it.gst_rate||0)/100;
       sub+=line; disc+=d; tax+=t;
     });
-    return { subtotal: sub, discount: disc, tax, total: sub-disc+tax };
+    const extrasTotal = Number(extras.installation_charge)+Number(extras.freight_charge)+Number(extras.amc_charge)+Number(extras.misc_charge);
+    const extrasTax = extrasTotal * 0.18;
+    return { subtotal: sub, discount: disc, tax: tax + extrasTax, extras: extrasTotal, total: sub-disc+tax+extrasTotal+extrasTax };
   };
   const totals = calc();
 
-  const save = async () => {
+  const save = async (status = "Draft") => {
     try {
       const valid = items.filter(i=>i.product_name);
       if (valid.length === 0) return toast.error("Add at least one product");
-      await http.post("/quotations", { lead_id: lead.id, items: valid, terms });
-      toast.success("Quotation created");
-      setOpen(false); setItems([{ product_name: "", quantity: 1, unit_price: 0, discount_pct: 0, gst_rate: 18 }]);
+      await http.post("/quotations", {
+        lead_id: lead.id, items: valid, terms, status,
+        installation_charge: Number(extras.installation_charge) || 0,
+        freight_charge: Number(extras.freight_charge) || 0,
+        amc_charge: Number(extras.amc_charge) || 0,
+        misc_charge: Number(extras.misc_charge) || 0,
+      });
+      toast.success(`Quotation saved as ${status}`);
+      setOpen(false); setItems([]); setExtras({ installation_charge: 0, freight_charge: 0, amc_charge: 0, misc_charge: 0 });
+      onDone();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
+  const changeStatus = async (q, newStatus) => {
+    try {
+      await http.put(`/quotations/${q.id}/status`, { status: newStatus });
+      toast.success(`Marked ${newStatus}`);
       onDone();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
@@ -425,8 +488,9 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
     doc.text(`Quotation: ${q.quotation_number}`, 14, 38);
     doc.setFontSize(10); doc.setTextColor(82, 82, 91);
     doc.text(`Date: ${new Date(q.created_at).toLocaleDateString()}`, 14, 44);
-    doc.text(`Customer: ${lead.lead_name}${lead.company_name ? ` (${lead.company_name})` : ""}`, 14, 50);
-    if (lead.address) doc.text(`Address: ${lead.address}, ${lead.city || ""}`, 14, 56);
+    doc.text(`Status: ${q.status || "Draft"}`, 14, 50);
+    doc.text(`Customer: ${lead.lead_name}${lead.company_name ? ` (${lead.company_name})` : ""}`, 14, 56);
+    if (lead.address) doc.text(`Address: ${lead.address}, ${lead.city || ""}`, 14, 62);
 
     autoTable(doc, {
       head: [["SKU", "Product", "Qty", "Unit Price", "Disc %", "GST %", "Amount"]],
@@ -437,15 +501,29 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
         const t = taxable * (it.gst_rate||18)/100;
         return [it.sku || "-", it.product_name, it.quantity, it.unit_price.toFixed(2), it.discount_pct, it.gst_rate, (taxable+t).toFixed(2)];
       }),
-      startY: 64,
+      startY: 70,
       styles: { fontSize: 9 },
       headStyles: { fillColor: [24, 24, 27], textColor: 255 },
     });
 
-    let y = doc.lastAutoTable.finalY + 8;
+    let y = doc.lastAutoTable.finalY + 6;
+    const extras = [
+      ["Installation", q.installation_charge || 0],
+      ["Freight", q.freight_charge || 0],
+      ["AMC", q.amc_charge || 0],
+      ["Misc", q.misc_charge || 0],
+    ].filter(([_, v]) => v > 0);
+    if (extras.length) {
+      doc.setFontSize(10); doc.setTextColor(24,24,27);
+      doc.text("Other Charges:", 14, y); y += 5;
+      extras.forEach(([k, v]) => { doc.text(`${k}: INR ${v.toFixed(2)}`, 14, y); y += 5; });
+      y += 2;
+    }
+
     doc.setFontSize(10);
     doc.text(`Subtotal: INR ${q.totals.subtotal.toFixed(2)}`, 140, y); y+=5;
     doc.text(`Discount: INR ${q.totals.discount.toFixed(2)}`, 140, y); y+=5;
+    if (q.totals.extras) { doc.text(`Extras: INR ${q.totals.extras.toFixed(2)}`, 140, y); y+=5; }
     doc.text(`GST: INR ${q.totals.tax.toFixed(2)}`, 140, y); y+=5;
     doc.setFontSize(12); doc.setTextColor(225, 29, 72);
     doc.text(`Total: INR ${q.totals.total.toFixed(2)}`, 140, y+2);
@@ -457,7 +535,17 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
     doc.save(`${q.quotation_number}.pdf`);
   };
 
-  const updItem = (i, k, v) => { const a=[...items]; a[i][k]=k==="product_name"||k==="sku"?v:Number(v); setItems(a); };
+  const inrShort = (n) => "INR " + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+
+  const STATUSES = ["Draft", "Sent", "Viewed", "Negotiation", "Approved", "Rejected"];
+  const stColor = (s) => ({
+    Draft: "bg-zinc-100 text-zinc-700 border-zinc-300",
+    Sent: "bg-blue-50 text-blue-700 border-blue-200",
+    Viewed: "bg-cyan-50 text-cyan-700 border-cyan-200",
+    Negotiation: "bg-amber-50 text-amber-700 border-amber-200",
+    Approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    Rejected: "bg-rose-50 text-rose-700 border-rose-200",
+  }[s] || "bg-zinc-100 text-zinc-700 border-zinc-300");
 
   return (
     <div>
@@ -465,31 +553,79 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
         <div className="overline text-zinc-500">{quots.length} quotations</div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button data-testid="new-quotation-btn" className="bg-rose-600 hover:bg-rose-700 rounded-sm"><Plus size={16} className="mr-1" />New Quotation</Button></DialogTrigger>
-          <DialogContent className="rounded-sm max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="rounded-sm max-w-4xl max-h-[92vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Create Quotation</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <div className="overline text-zinc-500">Items</div>
-              {items.map((it, i)=>(
-                <div key={i} className="grid grid-cols-6 gap-2 items-end">
-                  <Input placeholder="Product" className="rounded-sm col-span-2" value={it.product_name} onChange={(e)=>updItem(i,"product_name",e.target.value)} data-testid={`quot-product-${i}`} />
-                  <Input type="number" placeholder="Qty" className="rounded-sm" value={it.quantity} onChange={(e)=>updItem(i,"quantity",e.target.value)} />
-                  <Input type="number" placeholder="Price" className="rounded-sm" value={it.unit_price} onChange={(e)=>updItem(i,"unit_price",e.target.value)} />
-                  <Input type="number" placeholder="Disc%" className="rounded-sm" value={it.discount_pct} onChange={(e)=>updItem(i,"discount_pct",e.target.value)} />
-                  <Input type="number" placeholder="GST%" className="rounded-sm" value={it.gst_rate} onChange={(e)=>updItem(i,"gst_rate",e.target.value)} />
-                </div>
-              ))}
-              <Button variant="outline" onClick={()=>setItems([...items,{product_name:"",quantity:1,unit_price:0,discount_pct:0,gst_rate:18}])} className="rounded-sm">+ Add Item</Button>
+            <div className="space-y-4">
               <div>
-                <Label className="text-[11px] uppercase tracking-wider text-zinc-600 mb-1 block">Terms</Label>
+                <div className="overline text-zinc-500 mb-2">Add Product From Catalog</div>
+                <ProductSearch onSelect={addProduct} />
+                <div className="text-xs text-zinc-500 mt-1">Or <button type="button" onClick={addBlank} className="text-rose-600 hover:underline" data-testid="add-blank-item-btn">add a custom line item</button></div>
+              </div>
+
+              {items.length > 0 && (
+                <div className="border border-zinc-200">
+                  <div className="grid grid-cols-12 gap-1 bg-zinc-50 px-2 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-bold border-b border-zinc-200">
+                    <div className="col-span-4">Product</div>
+                    <div className="col-span-1 text-center">Qty</div>
+                    <div className="col-span-2 text-right">Unit Price</div>
+                    <div className="col-span-1 text-center">Disc%</div>
+                    <div className="col-span-1 text-center">GST%</div>
+                    <div className="col-span-2 text-right">Amount</div>
+                    <div className="col-span-1"></div>
+                  </div>
+                  {items.map((it, i) => {
+                    const line = (it.quantity||0)*(it.unit_price||0);
+                    const d = line*(it.discount_pct||0)/100;
+                    const amount = (line - d) * (1 + (it.gst_rate||0)/100);
+                    return (
+                      <div key={i} className="grid grid-cols-12 gap-1 px-2 py-2 items-center border-b border-zinc-100 last:border-0">
+                        <Input className="col-span-4 rounded-sm h-8" placeholder="Product name" value={it.product_name} onChange={(e)=>updItem(i,"product_name",e.target.value)} data-testid={`quot-product-${i}`} />
+                        <Input type="number" className="col-span-1 rounded-sm h-8 text-center" value={it.quantity} onChange={(e)=>updItem(i,"quantity",e.target.value)} />
+                        <Input type="number" className="col-span-2 rounded-sm h-8 text-right font-mono-data" value={it.unit_price} onChange={(e)=>updItem(i,"unit_price",e.target.value)} />
+                        <Input type="number" className="col-span-1 rounded-sm h-8 text-center" value={it.discount_pct} onChange={(e)=>updItem(i,"discount_pct",e.target.value)} />
+                        <Input type="number" className="col-span-1 rounded-sm h-8 text-center" value={it.gst_rate} onChange={(e)=>updItem(i,"gst_rate",e.target.value)} />
+                        <div className="col-span-2 text-right font-mono-data text-sm text-zinc-900">{inrShort(amount)}</div>
+                        <button type="button" onClick={()=>removeItem(i)} className="col-span-1 text-rose-500 hover:text-rose-700 text-sm" data-testid={`remove-item-${i}`}>×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div>
+                <div className="overline text-zinc-500 mb-2">Other Charges</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    { k: "installation_charge", l: "Installation" },
+                    { k: "freight_charge", l: "Freight" },
+                    { k: "amc_charge", l: "AMC" },
+                    { k: "misc_charge", l: "Misc" },
+                  ].map(({ k, l }) => (
+                    <div key={k}>
+                      <Label className="text-[10px] uppercase tracking-wider text-zinc-500">{l}</Label>
+                      <Input type="number" value={extras[k]} onChange={(e)=>setExtras({...extras, [k]: e.target.value})} className="rounded-sm h-9 font-mono-data" data-testid={`extra-${k}`} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-[11px] uppercase tracking-wider text-zinc-600 mb-1 block">Terms &amp; Conditions</Label>
                 <Textarea value={terms} onChange={(e)=>setTerms(e.target.value)} rows={2} className="rounded-sm" />
               </div>
+
               <div className="bg-zinc-50 p-3 border border-zinc-200 text-sm font-mono-data">
-                <div className="flex justify-between"><span>Subtotal</span><span>{inr(totals.subtotal)}</span></div>
-                <div className="flex justify-between text-zinc-500"><span>Discount</span><span>-{inr(totals.discount)}</span></div>
-                <div className="flex justify-between text-zinc-500"><span>GST</span><span>+{inr(totals.tax)}</span></div>
-                <div className="flex justify-between text-rose-600 font-bold border-t border-zinc-300 pt-2 mt-2"><span>Total</span><span>{inr(totals.total)}</span></div>
+                <div className="flex justify-between"><span>Subtotal</span><span>{inrShort(totals.subtotal)}</span></div>
+                <div className="flex justify-between text-zinc-500"><span>Discount</span><span>-{inrShort(totals.discount)}</span></div>
+                {totals.extras > 0 && <div className="flex justify-between text-zinc-500"><span>Other Charges</span><span>+{inrShort(totals.extras)}</span></div>}
+                <div className="flex justify-between text-zinc-500"><span>GST</span><span>+{inrShort(totals.tax)}</span></div>
+                <div className="flex justify-between text-rose-600 font-bold border-t border-zinc-300 pt-2 mt-2 text-base"><span>Grand Total</span><span>{inrShort(totals.total)}</span></div>
               </div>
-              <Button onClick={save} className="bg-rose-600 hover:bg-rose-700 rounded-sm w-full" data-testid="save-quotation-btn">Save Quotation</Button>
+
+              <div className="flex gap-2">
+                <Button onClick={()=>save("Draft")} variant="outline" className="rounded-sm flex-1" data-testid="save-quot-draft-btn">Save as Draft</Button>
+                <Button onClick={()=>save("Sent")} className="bg-rose-600 hover:bg-rose-700 rounded-sm flex-1" data-testid="save-quotation-btn">Save &amp; Mark Sent</Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
@@ -499,11 +635,18 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
         {quots.map((q) => (
           <div key={q.id} className="p-4 flex items-center justify-between hover:bg-zinc-50">
             <div>
-              <div className="font-mono-data font-bold text-zinc-900">{q.quotation_number}</div>
+              <div className="flex items-center gap-2">
+                <div className="font-mono-data font-bold text-zinc-900">{q.quotation_number}</div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-sm border uppercase tracking-wider ${stColor(q.status || "Draft")}`}>{q.status || "Draft"}</span>
+              </div>
               <div className="text-xs text-zinc-500 mt-0.5">{q.items.length} items · {new Date(q.created_at).toLocaleDateString()}</div>
             </div>
             <div className="flex items-center gap-3">
               <span className="font-mono-data font-bold text-rose-600">{inr(q.totals.total)}</span>
+              <Select value={q.status || "Draft"} onValueChange={(v)=>changeStatus(q, v)}>
+                <SelectTrigger className="w-[130px] h-8 rounded-sm text-xs" data-testid={`q-status-${q.id}`}><SelectValue /></SelectTrigger>
+                <SelectContent>{STATUSES.map((s)=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
               <Button onClick={()=>downloadPDF(q)} variant="outline" size="sm" className="rounded-sm" data-testid={`download-pdf-${q.id}`}>
                 <FileText size={14} className="mr-1" /> PDF
               </Button>

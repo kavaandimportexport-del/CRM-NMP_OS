@@ -127,6 +127,14 @@ class LeadIn(BaseModel):
     assigned_to: Optional[str] = ""
     status: str = "New"
     notes: Optional[str] = ""
+    next_follow_up: Optional[str] = ""
+    follow_up_type: Optional[str] = "Call"
+    decision_maker: Optional[str] = ""
+    budget: float = 0
+    expected_closure_date: Optional[str] = ""
+    competitor: Optional[str] = ""
+    probability: int = 25
+    closure_type: Optional[str] = ""
 
 class SiteVisitIn(BaseModel):
     gps_lat: float
@@ -158,8 +166,13 @@ class QuotationIn(BaseModel):
     lead_id: str
     quotation_number: Optional[str] = ""
     items: List[QuotationItem]
+    installation_charge: float = 0
+    freight_charge: float = 0
+    amc_charge: float = 0
+    misc_charge: float = 0
     terms: Optional[str] = "50% advance, balance against delivery. Warranty as per brand."
     notes: Optional[str] = ""
+    status: Optional[str] = "Draft"
 
 class InventoryItem(BaseModel):
     sku: str
@@ -411,7 +424,8 @@ async def update_task(task_id: str, body: dict, user: dict = Depends(get_current
     return serialize(t)
 
 # ---------- Quotations ----------
-def calc_quotation(items: List[dict]) -> dict:
+def calc_quotation(items: List[dict], extras: dict = None) -> dict:
+    extras = extras or {}
     sub = 0; disc = 0; tax = 0
     for it in items:
         line = it["quantity"] * it["unit_price"]
@@ -419,8 +433,13 @@ def calc_quotation(items: List[dict]) -> dict:
         taxable = line - d
         t = taxable * it.get("gst_rate", 18) / 100
         sub += line; disc += d; tax += t
+    extras_total = sum([extras.get("installation_charge", 0), extras.get("freight_charge", 0),
+                        extras.get("amc_charge", 0), extras.get("misc_charge", 0)])
+    extras_tax = extras_total * 0.18  # default 18% GST on services
+    grand = sub - disc + tax + extras_total + extras_tax
     return {"subtotal": round(sub, 2), "discount": round(disc, 2),
-            "tax": round(tax, 2), "total": round(sub - disc + tax, 2)}
+            "tax": round(tax + extras_tax, 2), "extras": round(extras_total, 2),
+            "total": round(grand, 2)}
 
 @api.get("/quotations")
 async def list_quotations(user: dict = Depends(get_current_user), lead_id: Optional[str] = None):
@@ -432,14 +451,18 @@ async def list_quotations(user: dict = Depends(get_current_user), lead_id: Optio
 @api.post("/quotations")
 async def create_quotation(body: QuotationIn, user: dict = Depends(get_current_user)):
     items = [i.model_dump() for i in body.items]
-    totals = calc_quotation(items)
+    extras = {"installation_charge": body.installation_charge, "freight_charge": body.freight_charge,
+              "amc_charge": body.amc_charge, "misc_charge": body.misc_charge}
+    totals = calc_quotation(items, extras)
     count = await db.quotations.count_documents({})
     qnum = body.quotation_number or f"NMP-Q-{datetime.now().year}-{count+1:05d}"
     doc = {
         "lead_id": body.lead_id,
         "quotation_number": qnum,
         "items": items, "terms": body.terms, "notes": body.notes,
-        "totals": totals, "version": 1, "status": "Draft",
+        "totals": totals, "version": 1, "status": body.status or "Draft",
+        "installation_charge": body.installation_charge, "freight_charge": body.freight_charge,
+        "amc_charge": body.amc_charge, "misc_charge": body.misc_charge,
         "created_by": user["id"], "created_by_name": user["name"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -459,6 +482,57 @@ async def get_quotation(qid: str, user: dict = Depends(get_current_user)):
     if not q:
         raise HTTPException(404, "Not found")
     return serialize(q)
+
+@api.put("/quotations/{qid}/status")
+async def update_quotation_status(qid: str, body: dict, user: dict = Depends(get_current_user)):
+    status = body.get("status")
+    if status not in ["Draft", "Sent", "Viewed", "Negotiation", "Approved", "Rejected"]:
+        raise HTTPException(400, "Invalid status")
+    await db.quotations.update_one({"_id": ObjectId(qid)}, {"$set": {"status": status}})
+    q = await db.quotations.find_one({"_id": ObjectId(qid)})
+    if q:
+        await db.activities.insert_one({
+            "lead_id": q["lead_id"], "activity_type": "quotation_status",
+            "description": f"Quotation {q['quotation_number']} marked {status}",
+            "user_id": user["id"], "user_name": user["name"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    return serialize(q)
+
+# ---------- Follow-ups & Pipeline ----------
+@api.get("/follow-ups")
+async def follow_ups(user: dict = Depends(get_current_user)):
+    q = {"next_follow_up": {"$exists": True, "$ne": ""}}
+    if user["role"] in ("field_sales", "store_sales"):
+        q["assigned_to"] = user["id"]
+    leads = await db.leads.find(q).sort("next_follow_up", 1).to_list(500)
+    today = datetime.now(timezone.utc).date().isoformat()
+    result = {"today": [], "overdue": [], "upcoming": []}
+    for l in leads:
+        l = serialize(l)
+        d = (l.get("next_follow_up") or "")[:10]
+        if not d: continue
+        if d < today: result["overdue"].append(l)
+        elif d == today: result["today"].append(l)
+        else: result["upcoming"].append(l)
+    return result
+
+@api.get("/pipeline")
+async def pipeline(user: dict = Depends(get_current_user)):
+    q = {}
+    if user["role"] in ("field_sales", "store_sales"):
+        q["assigned_to"] = user["id"]
+    stages = ["New", "Contacted", "Site Visit", "Quotation", "Negotiation", "Won", "Lost"]
+    out = {}
+    for s in stages:
+        leads = await db.leads.find({**q, "status": s}).sort("created_at", -1).to_list(200)
+        items = [serialize(l) for l in leads]
+        out[s] = {
+            "count": len(items),
+            "value": sum(l.get("expected_deal_value", 0) for l in items),
+            "leads": items,
+        }
+    return out
 
 # ---------- Inventory ----------
 @api.get("/inventory")
@@ -519,11 +593,24 @@ async def dashboard_kpis(user: dict = Depends(get_current_user)):
         {"$match": q}, {"$group": {"_id": "$lead_source", "count": {"$sum": 1}}},
     ]).to_list(50)
     source_breakdown = [{"source": s["_id"], "count": s["count"]} for s in src_pipe]
+    # Pipeline value (open leads expected value)
+    open_leads_docs = await db.leads.find(open_q).to_list(2000)
+    pipeline_value = sum(l.get("expected_deal_value", 0) for l in open_leads_docs)
+    # Follow ups
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    fu_q = {"next_follow_up": {"$exists": True, "$ne": ""}}
+    if user["role"] in ("field_sales", "store_sales"):
+        fu_q["assigned_to"] = user["id"]
+    fu_leads = await db.leads.find(fu_q).to_list(2000)
+    today_fu = sum(1 for l in fu_leads if (l.get("next_follow_up") or "")[:10] == today_iso)
+    overdue_fu = sum(1 for l in fu_leads if (l.get("next_follow_up") or "")[:10] and (l.get("next_follow_up") or "")[:10] < today_iso)
     return {"total_leads": total, "open_leads": open_leads, "deals_won": won, "deals_lost": lost,
             "gps_verified": gps_verified, "visit_pending": visit_pending,
             "quotations_sent": quotations_sent, "revenue": revenue,
             "conversion_rate": conv_rate, "status_breakdown": status_breakdown,
-            "source_breakdown": source_breakdown}
+            "source_breakdown": source_breakdown,
+            "pipeline_value": pipeline_value,
+            "today_follow_ups": today_fu, "overdue_follow_ups": overdue_fu}
 
 # ---------- File Upload ----------
 @api.post("/files/upload")

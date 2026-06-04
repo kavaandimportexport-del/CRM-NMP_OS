@@ -8,6 +8,7 @@ import InviteAccept from "@/pages/InviteAccept";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
 import LeadDetail from "@/pages/LeadDetail";
+import Pipeline from "@/pages/Pipeline";
 import Tasks from "@/pages/Tasks";
 import Inventory from "@/pages/Inventory";
 import Employees from "@/pages/Employees";
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/" element={<Shell><Dashboard /></Shell>} />
           <Route path="/leads" element={<Shell><Leads /></Shell>} />
           <Route path="/leads/:id" element={<Shell><LeadDetail /></Shell>} />
+          <Route path="/pipeline" element={<Shell><Pipeline /></Shell>} />
           <Route path="/tasks" element={<Shell><Tasks /></Shell>} />
           <Route path="/inventory" element={<Shell><Inventory /></Shell>} />
           <Route path="/employees" element={<Shell><Employees /></Shell>} />
