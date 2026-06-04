@@ -639,6 +639,156 @@ async def bulk_import(items: List[InventoryItem], user: dict = Depends(require_r
         await db.inventory.insert_many(docs)
     return {"imported": len(docs)}
 
+@api.put("/inventory/{item_id}")
+async def update_inventory(item_id: str, body: dict, user: dict = Depends(require_roles("super_admin", "admin"))):
+    body.pop("_id", None); body.pop("id", None)
+    await db.inventory.update_one({"_id": ObjectId(item_id)}, {"$set": body})
+    item = await db.inventory.find_one({"_id": ObjectId(item_id)})
+    return serialize(item)
+
+@api.delete("/inventory/{item_id}")
+async def delete_inventory(item_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.inventory.delete_one({"_id": ObjectId(item_id)})
+    return {"ok": True}
+
+# ---------- Password Change ----------
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str
+
+@api.post("/auth/change-password")
+async def change_password(body: ChangePasswordIn, user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"_id": ObjectId(user["id"])})
+    if not verify_password(body.old_password, u["password_hash"]):
+        raise HTTPException(400, "Current password is incorrect")
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "New password must be at least 6 characters")
+    await db.users.update_one(
+        {"_id": ObjectId(user["id"])},
+        {"$set": {"password_hash": hash_password(body.new_password)}, "$inc": {"token_version": 1}},
+    )
+    return {"ok": True}
+
+# ---------- GPS Check-in / Check-out ----------
+class CheckInIn(BaseModel):
+    lead_id: Optional[str] = ""
+    gps_lat: float
+    gps_lng: float
+    gps_accuracy: Optional[float] = 0
+    notes: Optional[str] = ""
+
+class CheckOutIn(BaseModel):
+    check_in_id: str
+    gps_lat: float
+    gps_lng: float
+    distance_km: Optional[float] = 0
+    duration_minutes: Optional[float] = 0
+    signature_data: Optional[str] = ""  # base64 image
+    customer_name: Optional[str] = ""
+    summary: Optional[str] = ""
+
+@api.post("/gps/check-in")
+async def gps_check_in(body: CheckInIn, user: dict = Depends(get_current_user)):
+    doc = body.model_dump()
+    doc["user_id"] = user["id"]
+    doc["user_name"] = user["name"]
+    doc["check_in_at"] = datetime.now(timezone.utc).isoformat()
+    doc["status"] = "Open"
+    res = await db.gps_visits.insert_one(doc)
+    if body.lead_id:
+        await db.activities.insert_one({
+            "lead_id": body.lead_id, "activity_type": "gps_check_in",
+            "description": f"GPS Check-in by {user['name']} ({body.gps_lat:.5f}, {body.gps_lng:.5f})",
+            "user_id": user["id"], "user_name": user["name"],
+            "created_at": doc["check_in_at"],
+        })
+    doc["id"] = str(res.inserted_id)
+    return serialize(doc)
+
+@api.post("/gps/check-out")
+async def gps_check_out(body: CheckOutIn, user: dict = Depends(get_current_user)):
+    visit = await db.gps_visits.find_one({"_id": ObjectId(body.check_in_id), "user_id": user["id"]})
+    if not visit:
+        raise HTTPException(404, "Check-in not found or not yours")
+    update = body.model_dump()
+    update["check_out_at"] = datetime.now(timezone.utc).isoformat()
+    update["status"] = "Closed"
+    await db.gps_visits.update_one({"_id": ObjectId(body.check_in_id)}, {"$set": update})
+    if visit.get("lead_id"):
+        await db.activities.insert_one({
+            "lead_id": visit["lead_id"], "activity_type": "gps_check_out",
+            "description": f"Visit closed by {user['name']} (distance {body.distance_km}km, signed by {body.customer_name or 'customer'})",
+            "user_id": user["id"], "user_name": user["name"],
+            "created_at": update["check_out_at"],
+        })
+    visit.update(update)
+    return serialize(visit)
+
+@api.get("/gps/visits")
+async def list_visits(user: dict = Depends(get_current_user), lead_id: Optional[str] = None):
+    q = {}
+    if lead_id: q["lead_id"] = lead_id
+    if user["role"] in ("field_sales", "store_sales"):
+        q["user_id"] = user["id"]
+    visits = await db.gps_visits.find(q).sort("check_in_at", -1).to_list(200)
+    return [serialize(v) for v in visits]
+
+# ---------- Export (Excel) ----------
+@api.get("/export/excel")
+async def export_excel(user: dict = Depends(require_roles("super_admin"))):
+    from openpyxl import Workbook
+    from io import BytesIO
+    wb = Workbook()
+    # Leads
+    ws = wb.active
+    ws.title = "Leads"
+    headers = ["lead_name","company_name","contact_person","mobile","email","city","state","lead_source","lead_type","status","priority","expected_deal_value","probability","next_follow_up","competitor","created_at"]
+    ws.append([h.replace("_"," ").title() for h in headers])
+    async for l in db.leads.find():
+        ws.append([str(l.get(h, "") or "") for h in headers])
+    # Quotations
+    ws2 = wb.create_sheet("Quotations")
+    q_headers = ["quotation_number","lead_id","status","subtotal","discount","tax","total","items_count","created_by_name","created_at"]
+    ws2.append([h.replace("_"," ").title() for h in q_headers])
+    async for q in db.quotations.find():
+        totals = q.get("totals", {})
+        row = [q.get("quotation_number",""), q.get("lead_id",""), q.get("status",""),
+               totals.get("subtotal",0), totals.get("discount",0), totals.get("tax",0), totals.get("total",0),
+               len(q.get("items", [])), q.get("created_by_name",""), str(q.get("created_at",""))]
+        ws2.append(row)
+    # Inventory
+    ws3 = wb.create_sheet("Inventory")
+    i_headers = ["sku","product_name","brand","category","cost_price","selling_price","mrp","gst_rate","stock","warehouse"]
+    ws3.append([h.replace("_"," ").title() for h in i_headers])
+    async for it in db.inventory.find():
+        ws3.append([str(it.get(h, "") or "") for h in i_headers])
+    # Employees
+    ws4 = wb.create_sheet("Employees")
+    e_headers = ["name","email","mobile","role","department","designation","territory","status","created_at"]
+    ws4.append([h.replace("_"," ").title() for h in e_headers])
+    async for e in db.users.find():
+        ws4.append([str(e.get(h, "") or "") for h in e_headers])
+    # Tasks
+    ws5 = wb.create_sheet("Tasks")
+    t_headers = ["title","task_type","status","lead_id","assigned_to","due_date","created_at"]
+    ws5.append([h.replace("_"," ").title() for h in t_headers])
+    async for t in db.tasks.find():
+        ws5.append([str(t.get(h, "") or "") for h in t_headers])
+    # GPS Visits
+    ws6 = wb.create_sheet("GPS Visits")
+    v_headers = ["user_name","lead_id","gps_lat","gps_lng","check_in_at","check_out_at","distance_km","customer_name","status"]
+    ws6.append([h.replace("_"," ").title() for h in v_headers])
+    async for v in db.gps_visits.find():
+        ws6.append([str(v.get(h, "") or "") for h in v_headers])
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"NMP_SalesOS_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
 # ---------- Dashboard ----------
 @api.get("/dashboard/kpis")
 async def dashboard_kpis(user: dict = Depends(get_current_user)):

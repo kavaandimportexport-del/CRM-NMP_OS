@@ -18,6 +18,8 @@ import {
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import ProductSearch from "@/components/ProductSearch";
+import GpsCheckInOut from "@/components/GpsCheckInOut";
 
 const STATUSES = ["New","Contacted","Site Visit","Quotation","Negotiation","Won","Lost"];
 
@@ -170,7 +172,10 @@ export default function LeadDetail() {
           </TabsContent>
 
           <TabsContent value="site" className="mt-4">
-            <SiteVerification lead={lead} sv={sv} onDone={refresh} />
+            <div className="grid lg:grid-cols-2 gap-4">
+              <SiteVerification lead={lead} sv={sv} onDone={refresh} />
+              <GpsCheckInOut leadId={id} onDone={refresh} />
+            </div>
           </TabsContent>
 
           <TabsContent value="photos" className="mt-4">
