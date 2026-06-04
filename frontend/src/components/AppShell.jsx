@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   House, Lightning, Users, Package, GraduationCap,
-  BookOpen, ChartBar, SignOut, Headphones, ClipboardText, Books, Kanban,
+  ChartBar, SignOut, Headphones, ClipboardText, Kanban,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -12,9 +12,7 @@ const nav = [
   { to: "/tasks", label: "Tasks", icon: ClipboardText, testid: "nav-tasks" },
   { to: "/inventory", label: "Inventory", icon: Package, testid: "nav-inventory" },
   { to: "/employees", label: "Employees", icon: Users, testid: "nav-employees" },
-  { to: "/playbooks", label: "Playbooks", icon: Books, testid: "nav-playbooks" },
   { to: "/training", label: "Training", icon: GraduationCap, testid: "nav-training" },
-  { to: "/knowledge", label: "Knowledge", icon: BookOpen, testid: "nav-knowledge" },
   { to: "/reports", label: "Reports", icon: ChartBar, testid: "nav-reports" },
 ];
 

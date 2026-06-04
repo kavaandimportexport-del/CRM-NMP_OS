@@ -773,39 +773,52 @@ DEFAULT_KNOWLEDGE = [
 DEFAULT_TRAINING = [
     {"title": "NMP Sales Process 101", "category": "Sales", "duration": "20 min",
      "description": "Lead-centric selling. Site visit discipline, GPS, photos, follow-up cadence.",
-     "video_url": "", "pdf_url": "",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "Training Video",
      "quiz": [
          {"q": "What is the single source of truth in NMP?", "options": ["Quotation", "Lead", "Task", "Photo"], "answer": 1},
          {"q": "When is GPS verification mandatory?", "options": ["Never", "For Product Sale only", "When Visit Requirement is Mandatory", "Optional always"], "answer": 2},
          {"q": "Maximum lead health score?", "options": ["50", "75", "100", "120"], "answer": 2},
      ]},
-    {"title": "Pro Audio Basics", "category": "Product", "duration": "45 min",
-     "description": "Microphones, speakers, mixers, signal flow, gain staging, dB scale.",
-     "video_url": "", "pdf_url": "",
+    {"title": "Shure SM58 Product Demo", "category": "Product", "duration": "8 min",
+     "description": "Hands-on demo of the industry-standard dynamic vocal mic — features, benefits, sales talking points.",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "Product Demo",
      "quiz": [
-         {"q": "A dynamic mic uses a:", "options": ["Battery", "Moving coil", "Crystal", "LED"], "answer": 1},
-         {"q": "dB scale is:", "options": ["Linear", "Logarithmic", "Exponential", "Random"], "answer": 1},
-         {"q": "Best mic for live vocals (durable)?", "options": ["SM58", "Studio condenser", "Lavalier", "Boundary"], "answer": 0},
+         {"q": "SM58 pickup pattern?", "options": ["Omni", "Cardioid", "Figure-8", "Shotgun"], "answer": 1},
+         {"q": "Best application for SM58?", "options": ["Studio recording", "Live vocals", "Boundary mic", "Lavalier"], "answer": 1},
      ]},
-    {"title": "Church Audio Masterclass", "category": "Product", "duration": "30 min",
-     "description": "Worship audio needs, contemporary vs traditional, monitoring, live streaming.",
-     "video_url": "", "pdf_url": "",
+    {"title": "Yamaha DXR Series Demo", "category": "Product", "duration": "12 min",
+     "description": "Yamaha DXR active speaker series — coverage, SPL, daisy-chain configurations.",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "Product Demo",
      "quiz": [
-         {"q": "Reverb in a church is best treated with:", "options": ["More speakers", "Acoustic treatment", "Compressors", "Subwoofers"], "answer": 1},
-         {"q": "In-ear monitors solve:", "options": ["Bass response", "Stage feedback & mix", "Reverb", "Power loss"], "answer": 1},
+         {"q": "DXR10 wattage class?", "options": ["350W", "700W", "1100W", "1300W"], "answer": 2},
+         {"q": "DXR is active or passive?", "options": ["Active (powered)", "Passive (unpowered)"], "answer": 0},
      ]},
-    {"title": "Quotation Writing", "category": "Sales", "duration": "15 min",
-     "description": "Structuring quotes, discount discipline, GST, payment terms.",
-     "video_url": "", "pdf_url": "",
+    {"title": "Auditorium Install SOP", "category": "Technical", "duration": "45 min",
+     "description": "Step-by-step installation SOP for auditoriums — cable runs, rigging, commissioning, customer handover.",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "SOP Video",
+     "quiz": [
+         {"q": "Rigging certification is:", "options": ["Optional", "Mandatory for flown speakers", "For mics only", "Customer choice"], "answer": 1},
+         {"q": "Final commissioning includes:", "options": ["EQ calibration", "Signal flow doc", "Customer training", "All of the above"], "answer": 3},
+     ]},
+    {"title": "Site Survey SOP", "category": "Technical", "duration": "25 min",
+     "description": "Field SOP for conducting a complete site survey — photos, measurements, requirement capture, GPS verification.",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "SOP Video",
+     "quiz": [
+         {"q": "Before quotation, what must be GPS verified?", "options": ["Office address", "Site location", "Vendor", "Bank"], "answer": 1},
+         {"q": "Minimum site photos required?", "options": ["0", "1", "3", "5+"], "answer": 3},
+     ]},
+    {"title": "Quotation Writing Masterclass", "category": "Sales", "duration": "15 min",
+     "description": "Structuring quotes, discount discipline, GST, payment terms, closing techniques.",
+     "video_url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "pdf_url": "",
+     "video_type": "Training Video",
      "quiz": [
          {"q": "Standard GST on pro-audio products in India?", "options": ["5%", "12%", "18%", "28%"], "answer": 2},
          {"q": "NMP default advance is:", "options": ["10%", "25%", "50%", "100%"], "answer": 2},
-     ]},
-    {"title": "Installation SOP", "category": "Technical", "duration": "60 min",
-     "description": "Site preparation, safety, rigging, commissioning, handover.",
-     "video_url": "", "pdf_url": "",
-     "quiz": [
-         {"q": "Rigging certification is:", "options": ["Optional", "Mandatory for flown speakers", "For mics only", "Customer choice"], "answer": 1},
      ]},
 ]
 
@@ -883,17 +896,17 @@ class TrainingIn(BaseModel):
     description: str = ""
     video_url: str = ""
     pdf_url: str = ""
+    video_type: str = "Training Video"  # Training Video / Product Demo / SOP Video
     quiz: List[dict] = []
 
 @api.get("/training")
 async def get_training(user: dict = Depends(get_current_user)):
-    items = await db.training.find().to_list(200)
-    # attach progress for current user
+    items = await db.training.find().sort("created_at", -1).to_list(200)
     out = []
     for t in items:
         t = serialize(t)
         p = await db.training_progress.find_one({"training_id": t["id"], "user_id": user["id"]})
-        t["progress"] = serialize(p) if p else {"status": "Not Started", "score": 0}
+        t["progress"] = serialize(p) if p else {"status": "Not Started", "score": 0, "video_watched": False}
         out.append(t)
     return out
 
@@ -904,6 +917,30 @@ async def create_training(body: TrainingIn, user: dict = Depends(require_roles("
     res = await db.training.insert_one(doc)
     doc["id"] = str(res.inserted_id)
     return serialize(doc)
+
+@api.put("/training/{t_id}")
+async def update_training(t_id: str, body: dict, user: dict = Depends(require_roles("super_admin", "admin"))):
+    body.pop("_id", None); body.pop("id", None)
+    await db.training.update_one({"_id": ObjectId(t_id)}, {"$set": body})
+    t = await db.training.find_one({"_id": ObjectId(t_id)})
+    return serialize(t)
+
+@api.delete("/training/{t_id}")
+async def delete_training(t_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.training.delete_one({"_id": ObjectId(t_id)})
+    await db.training_progress.delete_many({"training_id": t_id})
+    return {"ok": True}
+
+@api.post("/training/{t_id}/mark-watched")
+async def mark_watched(t_id: str, user: dict = Depends(get_current_user)):
+    await db.training_progress.update_one(
+        {"training_id": t_id, "user_id": user["id"]},
+        {"$set": {"training_id": t_id, "user_id": user["id"], "user_name": user["name"],
+                  "video_watched": True, "status": "In Progress",
+                  "watched_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 @api.post("/training/{t_id}/submit-quiz")
 async def submit_quiz(t_id: str, body: dict, user: dict = Depends(get_current_user)):

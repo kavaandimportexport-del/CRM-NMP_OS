@@ -12,9 +12,7 @@ import Pipeline from "@/pages/Pipeline";
 import Tasks from "@/pages/Tasks";
 import Inventory from "@/pages/Inventory";
 import Employees from "@/pages/Employees";
-import Playbooks from "@/pages/Playbooks";
 import Training from "@/pages/Training";
-import Knowledge from "@/pages/Knowledge";
 import Reports from "@/pages/Reports";
 
 const Shell = ({ children }) => (
@@ -36,9 +34,7 @@ export default function App() {
           <Route path="/tasks" element={<Shell><Tasks /></Shell>} />
           <Route path="/inventory" element={<Shell><Inventory /></Shell>} />
           <Route path="/employees" element={<Shell><Employees /></Shell>} />
-          <Route path="/playbooks" element={<Shell><Playbooks /></Shell>} />
           <Route path="/training" element={<Shell><Training /></Shell>} />
-          <Route path="/knowledge" element={<Shell><Knowledge /></Shell>} />
           <Route path="/reports" element={<Shell><Reports /></Shell>} />
         </Routes>
       </AuthProvider>
