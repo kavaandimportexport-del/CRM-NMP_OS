@@ -1,0 +1,88 @@
+{
+  "project_name": "NMP Sales OS",
+  "theme": "light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) + Pro Audio Aesthetic",
+  "domain": "Enterprise SaaS CRM for Music & Pro Audio Industry",
+  "design_philosophy": {
+    "core": "The UI must feel like a high-end audio mixing console or enterprise piece of hardware: dense, precise, authoritative, and highly functional.",
+    "strategy": "Pure white backgrounds for data clarity (tables/forms) juxtaposed with deep charcoal (Zinc 950) structural elements like sidebars. Use vibrant 'LED indicator' accents (Recording Red, Signal Green, Warning Amber) strictly to guide user action and denote lead health."
+  },
+  "colors": {
+    "background_app": "#F4F4F5",
+    "background_surface": "#FFFFFF",
+    "sidebar": "#09090B",
+    "sidebar_text": "#FAFAFA",
+    "sidebar_active": "#27272A",
+    "primary": "#E11D48",
+    "primary_hover": "#BE123C",
+    "accent_green": "#10B981",
+    "accent_amber": "#F59E0B",
+    "text_main": "#18181B",
+    "text_muted": "#52525B",
+    "border": "#E4E4E7"
+  },
+  "typography": {
+    "heading_font": "Manrope",
+    "body_font": "IBM Plex Sans",
+    "scales": {
+      "h1": "text-3xl md:text-4xl tracking-tight font-extrabold text-zinc-900",
+      "h2": "text-xl md:text-2xl tracking-tight font-bold text-zinc-900",
+      "h3": "text-lg font-semibold text-zinc-900",
+      "body": "text-sm text-zinc-700 leading-relaxed",
+      "small": "text-xs text-zinc-500",
+      "label_overline": "text-xs tracking-[0.15em] uppercase font-bold text-zinc-500"
+    }
+  },
+  "layout_and_spacing": {
+    "dashboard_grid": "The 'Control Room' Grid: Use grid-cols-1 md:grid-cols-2 lg:grid-cols-4 with gap-4. Highly dense, screen-spanning widgets.",
+    "container_padding": "p-4 md:p-6 lg:p-8 depending on the container size.",
+    "borders": "Expose the skeleton. Use 1px borders (border-zinc-200) instead of soft shadows to define cards, panels, and table rows.",
+    "radius": "rounded-sm (4px) or rounded-none. Keep it sharp and industrial."
+  },
+  "components_strategy": {
+    "tables": "High density. Use pure HTML + Tailwind or Shadcn Table. Text size `text-sm`. Sticky headers (bg-zinc-50). Add hover states on rows (hover:bg-zinc-50). Use status badges (pill shaped or square) for Lead types and Priority.",
+    "customer_360_view": "Tabs-based layout using Shadcn Tabs. The 10 tabs (Overview, Contacts, Activities, Site Verification, etc.) must be horizontally scrollable if space is limited. Minimalist underline style.",
+    "health_score": "Visual Donut Chart (Shadcn Chart / Recharts). Total score out of 100. Apply color coding: 0-40 Red, 41-70 Amber, 71-100 Green.",
+    "buttons": "Primary buttons: bg-rose-600 text-white hover:bg-rose-700. Secondary: border border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-100.",
+    "forms": "Use Shadcn Input, Select, Checkbox. Keep inputs dense (h-9 or h-10)."
+  },
+  "interactions_and_motion": {
+    "hover_states": "All buttons and links must explicitly define hover colors. E.g. hover:bg-zinc-100 hover:text-zinc-900.",
+    "focus_states": "focus:ring-2 focus:ring-rose-500 focus:outline-none.",
+    "transitions": "Snappy and quick. transition-all duration-150."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "installation_command": "yarn add @phosphor-icons/react",
+    "usage": "Use Phospor icons for dense dashboards. Size 16px to 20px for inline data, 24px for sidebar navigation."
+  },
+  "testing_requirements": {
+    "data_testid": "CRITICAL: All interactive and key informational elements MUST include a 'data-testid' attribute (kebab-case, role-based). Example: data-testid='login-submit-button', data-testid='lead-card-123'."
+  },
+  "image_urls": [
+    {
+      "category": "auth_background",
+      "url": "https://images.unsplash.com/photo-1535406208535-1429839cfd13?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwyfHxyZWNvcmRpbmclMjBzdHVkaW8lMjBtaXhpbmclMjBjb25zb2xlfGVufDB8fHx8MTc4MDU2MDc4NHww&ixlib=rb-4.1.0&q=85",
+      "description": "High-end audio mixing console for the login screen to establish the professional music/audio context."
+    },
+    {
+      "category": "placeholder_site_photo",
+      "url": "https://images.pexels.com/photos/27926553/pexels-photo-27926553.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Modern auditorium interior to use as a placeholder for GPS-verified Site Verification photos."
+    },
+    {
+      "category": "placeholder_gallery_photo",
+      "url": "https://images.pexels.com/photos/36936571/pexels-photo-36936571.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Close-up of a professional mixing console for use in the Lead Photo Gallery."
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Do NOT use generic SaaS purple or soft blue gradients.",
+    "Follow the color palette strictly: Zinc (Greys) + Rose (Primary) + Emerald (Success) + Amber (Warning).",
+    "This is a dashboard/CRM. Use full-screen layouts (h-screen, overflow-hidden on main wrapper, overflow-y-auto on content) with a fixed sidebar.",
+    "Use Shadcn components but customize them to be sharp (rounded-sm) and have 1px borders instead of drop shadows.",
+    "The Customer 360 page is the core of this app. Build it carefully with Shadcn Tabs housing the distinct sections.",
+    "Implement Recharts for the KPI Dashboard and Lead Health Score donut chart.",
+    "Ensure every single button, link, and form input has a descriptive `data-testid` attribute."
+  ]
+}
