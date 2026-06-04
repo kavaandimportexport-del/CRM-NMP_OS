@@ -39,7 +39,22 @@ Build NMP Sales OS (New Music Palace Sales Operating System) — India's leading
 - **P14 Dashboard expansion**: Pipeline value, Won revenue, Today follow-ups, Overdue follow-ups tiles + Today/Overdue list cards
 - 12 seed products: Shure SM58/BLX24, Sennheiser e835, Yamaha MG10XU/DXR10, JBL EON710, AKG K240, Behringer X1832, Bose S1Pro+, Rode NT1, Focusrite 2i2, KRK Rokit 5
 
-## Implemented (Phase 2 Round 2 — Feb 2026)
+## Implemented (Phase 2 Round 3 — Feb 2026)
+- **Sidebar**: Removed standalone Playbooks and Knowledge tabs per user feedback (data still in DB; can be exposed via embedded panels later)
+- **Training & Certification (LMS upgrade)**:
+  - 3 video types: **Training Video**, **Product Demo**, **SOP Video** (color-coded badges + filter tabs)
+  - Admin CRUD: Add/Edit/Delete training modules with title, category, duration, description, video_url, video_type
+  - Video player modal: auto-converts YouTube/Vimeo share URLs to embed URLs; supports direct mp4
+  - "Mark Watched" auto-fires when video opens → status moves to "In Progress"
+  - In-modal quiz builder with multiple-choice options + radio button for correct answer + add/remove questions
+  - Per-user progress (Not Started / In Progress / Certified / Failed) with score
+  - Auto-generated branded **Certificate PDF** on quiz pass (≥70%) — includes employee name, training title, score, certificate number, issue date
+  - 6 seeded modules across all 3 types (Sales Process, Quotation Writing, Shure SM58 Demo, Yamaha DXR Demo, Auditorium Install SOP, Site Survey SOP)
+- **Pipeline Weighted Forecast Heat-Map**:
+  - New "Weighted Forecast" KPI tile = sum of (expected_deal_value × probability%)
+  - Each lead card colored by `weighted / column_max`: green left-border (top 1/3), amber (mid 1/3), neutral (bottom 1/3)
+  - Per-card display of probability% and weighted INR value
+- **Testing**: 20/20 new LMS tests pass + 19/20 prior regression (one pre-existing test storage drift, not a product bug)
 - **Quotation share**: mailto Email share button + WhatsApp wa.me share button on each quotation row (auto-fills customer phone/email)
 - **Employee admin actions**: Resend invite, Revoke invite, Suspend, Terminate, Activate, Reset password (returns temp password), Force logout, Login history modal — all gated to super_admin/admin
 - **JWT token_version**: Force-logout / status changes increment `token_version` so old JWTs return 401 "Session revoked"
