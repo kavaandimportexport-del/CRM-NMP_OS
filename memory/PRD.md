@@ -39,6 +39,19 @@ Build NMP Sales OS (New Music Palace Sales Operating System) — India's leading
 - **P14 Dashboard expansion**: Pipeline value, Won revenue, Today follow-ups, Overdue follow-ups tiles + Today/Overdue list cards
 - 12 seed products: Shure SM58/BLX24, Sennheiser e835, Yamaha MG10XU/DXR10, JBL EON710, AKG K240, Behringer X1832, Bose S1Pro+, Rode NT1, Focusrite 2i2, KRK Rokit 5
 
+## Implemented (Phase 2 Round 2 — Feb 2026)
+- **Quotation share**: mailto Email share button + WhatsApp wa.me share button on each quotation row (auto-fills customer phone/email)
+- **Employee admin actions**: Resend invite, Revoke invite, Suspend, Terminate, Activate, Reset password (returns temp password), Force logout, Login history modal — all gated to super_admin/admin
+- **JWT token_version**: Force-logout / status changes increment `token_version` so old JWTs return 401 "Session revoked"
+- **Login history**: Every login (success + fail) stored in `login_history` collection with IP + user agent
+- **Closure-type guard**: Cannot mark lead "Won" without a closure_type; frontend modal prompts (Site Visit / Phone Call / WhatsApp / Virtual Meeting / Email Closure)
+- **LMS (Training)**: DB-backed modules with multiple-choice quizzes (3-5 questions each), score-based pass/fail (70% pass mark), certificate PDF auto-generation with NMP branding, per-user progress tracking
+- **Knowledge Hub CRUD**: Admin can create / edit / delete / publish articles
+- **Playbook CRUD**: Admin can create / edit / delete playbooks with discovery questions, objections, products, checklist
+- **Approval Rate KPI**: Dashboard shows quotation approval rate (% Approved / total Sent-or-more)
+- **Stale-quote nudge**: `POST /api/quotations/run-stale-nudge` (admin/manager) auto-creates Follow-Up tasks for quotations Sent >3 days ago; idempotent
+- **Testing**: 35/35 backend tests pass (20 new + 15 regression)
+
 ## Backlog (Prioritized)
 
 ### P0 — Next iteration
