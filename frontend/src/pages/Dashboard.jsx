@@ -67,9 +67,10 @@ export default function Dashboard() {
       </div>
 
       {/* Headline row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
         <Kpi icon={Coins} label="Open Pipeline" value={inrShort(k.pipeline_value)} accent="rose" testid="kpi-pipeline-value" to="/pipeline" />
         <Kpi icon={CurrencyInr} label="Won Revenue" value={inrShort(k.revenue)} accent="emerald" testid="kpi-revenue" />
+        <Kpi icon={TrendUp} label="Quote Approval" value={`${k.quotation_approval_rate || 0}%`} accent="emerald" testid="kpi-approval-rate" />
         <Kpi icon={Bell} label="Today's Follow-ups" value={k.today_follow_ups || 0} accent="amber" testid="kpi-today-followups" />
         <Kpi icon={ClockCountdown} label="Overdue" value={k.overdue_follow_ups || 0} accent="rose" testid="kpi-overdue-followups" />
       </div>

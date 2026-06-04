@@ -73,6 +73,11 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(401, "User not found")
+        # force-logout via token_version mismatch
+        if payload.get("tv", 0) != user.get("token_version", 0):
+            raise HTTPException(401, "Session revoked")
+        if user.get("status") in ("Suspended", "Terminated", "Inactive"):
+            raise HTTPException(403, f"Account is {user.get('status').lower()}")
         return serialize(user)
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
@@ -216,14 +221,29 @@ async def setup_admin(body: SetupAdminIn, response: Response):
     return {"user": serialize(user), "token": token}
 
 @api.post("/auth/login")
-async def login(body: LoginIn, response: Response):
+async def login(body: LoginIn, request: Request, response: Response):
     user = await db.users.find_one({"email": body.email.lower()})
     if not user or not verify_password(body.password, user["password_hash"]):
+        await db.login_history.insert_one({
+            "email": body.email.lower(), "success": False,
+            "ip": request.client.host if request.client else "",
+            "user_agent": request.headers.get("User-Agent", ""),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
         raise HTTPException(401, "Invalid email or password")
-    if user.get("status") == "Inactive":
-        raise HTTPException(403, "Account is inactive")
-    token = create_access_token(str(user["_id"]), user["email"], user["role"])
+    if user.get("status") in ("Inactive", "Suspended", "Terminated"):
+        raise HTTPException(403, f"Account is {user.get('status', 'inactive').lower()}")
+    tv = user.get("token_version", 0)
+    payload = {"sub": str(user["_id"]), "email": user["email"], "role": user["role"], "tv": tv,
+               "exp": datetime.now(timezone.utc) + timedelta(hours=24), "type": "access"}
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=86400, path="/")
+    await db.login_history.insert_one({
+        "user_id": str(user["_id"]), "email": user["email"], "success": True,
+        "ip": request.client.host if request.client else "",
+        "user_agent": request.headers.get("User-Agent", ""),
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
     return {"user": serialize(user), "token": token}
 
 @api.post("/auth/logout")
@@ -280,6 +300,55 @@ async def invite_accept(body: InviteAcceptIn, response: Response):
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=86400, path="/")
     u = await db.users.find_one({"_id": u["_id"]})
     return {"user": serialize(u), "token": token}
+
+# ---------- Employee Admin Actions ----------
+@api.post("/employees/{emp_id}/resend-invite")
+async def resend_invite(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    new_token = secrets.token_urlsafe(24)
+    res = await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": {"invite_token": new_token, "status": "Pending"}})
+    if not res.matched_count:
+        raise HTTPException(404, "Employee not found")
+    return {"invite_token": new_token}
+
+@api.post("/employees/{emp_id}/revoke-invite")
+async def revoke_invite(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.users.update_one({"_id": ObjectId(emp_id)}, {"$unset": {"invite_token": ""}, "$set": {"status": "Inactive"}})
+    return {"ok": True}
+
+@api.post("/employees/{emp_id}/suspend")
+async def suspend_employee(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": {"status": "Suspended"}, "$inc": {"token_version": 1}})
+    return {"ok": True}
+
+@api.post("/employees/{emp_id}/terminate")
+async def terminate_employee(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": {"status": "Terminated"}, "$inc": {"token_version": 1}})
+    return {"ok": True}
+
+@api.post("/employees/{emp_id}/activate")
+async def activate_employee(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": {"status": "Active"}})
+    return {"ok": True}
+
+@api.post("/employees/{emp_id}/reset-password")
+async def reset_password(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    temp_pw = secrets.token_urlsafe(8)
+    await db.users.update_one({"_id": ObjectId(emp_id)},
+                              {"$set": {"password_hash": hash_password(temp_pw)},
+                               "$inc": {"token_version": 1}})
+    return {"temp_password": temp_pw}
+
+@api.post("/employees/{emp_id}/force-logout")
+async def force_logout(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.users.update_one({"_id": ObjectId(emp_id)}, {"$inc": {"token_version": 1}})
+    return {"ok": True}
+
+@api.get("/employees/{emp_id}/login-history")
+async def login_history(emp_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    u = await db.users.find_one({"_id": ObjectId(emp_id)})
+    if not u: raise HTTPException(404, "Not found")
+    history = await db.login_history.find({"$or": [{"user_id": emp_id}, {"email": u["email"]}]}).sort("at", -1).limit(50).to_list(50)
+    return [serialize(h) for h in history]
 
 # ---------- Leads ----------
 def lead_health_score(lead: dict) -> int:
@@ -342,6 +411,12 @@ async def get_lead(lead_id: str, user: dict = Depends(get_current_user)):
 @api.put("/leads/{lead_id}")
 async def update_lead(lead_id: str, body: dict, user: dict = Depends(get_current_user)):
     body.pop("_id", None); body.pop("id", None)
+    # Closure type required before Won
+    if body.get("status") == "Won":
+        existing = await db.leads.find_one({"_id": ObjectId(lead_id)})
+        closure_type = body.get("closure_type") or (existing or {}).get("closure_type")
+        if not closure_type:
+            raise HTTPException(400, "closure_type is required before marking a lead as Won")
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.leads.update_one({"_id": ObjectId(lead_id)}, {"$set": body})
     if "status" in body:
@@ -610,7 +685,15 @@ async def dashboard_kpis(user: dict = Depends(get_current_user)):
             "conversion_rate": conv_rate, "status_breakdown": status_breakdown,
             "source_breakdown": source_breakdown,
             "pipeline_value": pipeline_value,
-            "today_follow_ups": today_fu, "overdue_follow_ups": overdue_fu}
+            "today_follow_ups": today_fu, "overdue_follow_ups": overdue_fu,
+            "quotation_approval_rate": await quotation_approval_rate(quots_q)}
+
+async def quotation_approval_rate(quots_q: dict) -> float:
+    sent_or_more = await db.quotations.count_documents({**quots_q, "status": {"$in": ["Sent", "Viewed", "Negotiation", "Approved", "Rejected"]}})
+    if not sent_or_more:
+        return 0.0
+    approved = await db.quotations.count_documents({**quots_q, "status": "Approved"})
+    return round(approved / sent_or_more * 100, 1)
 
 # ---------- File Upload ----------
 @api.post("/files/upload")
@@ -636,8 +719,8 @@ async def get_file(file_id: str):
     content = base64.b64decode(doc["data"])
     return Response(content=content, media_type=doc.get("content_type", "application/octet-stream"))
 
-# ---------- Knowledge / Playbooks / Training (static) ----------
-PLAYBOOKS = [
+# ---------- Knowledge / Playbooks / Training (DB-backed with seed defaults) ----------
+DEFAULT_PLAYBOOKS = [
     {"id": "church", "category": "Church Sales",
      "discovery_questions": ["Seating capacity?", "Reverb/echo issues?", "Existing PA system?", "Worship style?", "Live streaming required?"],
      "objections": [{"o": "Too expensive", "r": "Show 10-year TCO vs cheap systems."}, {"o": "We will think about it", "r": "Offer free acoustic survey."}],
@@ -670,47 +753,220 @@ PLAYBOOKS = [
      "checklist": ["Tender review", "Site visit", "Bid submitted", "Tech approval"]},
 ]
 
-KNOWLEDGE_HUB = [
-    {"id": "k1", "category": "Product Guide", "title": "Choosing the Right Line Array",
-     "body": "Line arrays project sound over long throws with even coverage. Use for auditoriums over 300 seats, churches with high ceilings, or outdoor events."},
-    {"id": "k2", "category": "Brand Guide", "title": "Shure SM58 vs Sennheiser e835",
-     "body": "SM58: industry-standard, very durable. e835: brighter top end, lower handling noise. Recommend SM58 for live worship; e835 for spoken-word."},
-    {"id": "k3", "category": "FAQ", "title": "Treatment vs Soundproofing?",
-     "body": "Treatment improves sound INSIDE a room. Soundproofing stops sound from passing THROUGH walls. Churches need treatment; studios often need both."},
-    {"id": "k4", "category": "Troubleshooting", "title": "Feedback during worship",
-     "body": "Check mic placement vs monitors. Engage HPF below 80Hz. Use EQ to notch ringing freq. Consider in-ear monitors."},
-    {"id": "k5", "category": "Competitor", "title": "Why NMP vs Online Stores",
-     "body": "Online stores cannot do site surveys, acoustic measurement, installation, training, or AMC. NMP provides full lifecycle support."},
-    {"id": "k6", "category": "Sales Talk", "title": "Opening a Church Conversation",
-     "body": "Ask: How did Sunday service feel? Could everyone hear clearly? When was the last system upgrade?"},
-    {"id": "k7", "category": "Installation", "title": "Auditorium Install Checklist",
-     "body": "Cable runs, conduit, rigging certification, power isolation, equipment rack, signal flow diagram, commissioning report, customer training."},
+DEFAULT_KNOWLEDGE = [
+    {"category": "Product Guide", "title": "Choosing the Right Line Array",
+     "body": "Line arrays project sound over long throws with even coverage. Use for auditoriums over 300 seats, churches with high ceilings, or outdoor events.", "published": True},
+    {"category": "Brand Guide", "title": "Shure SM58 vs Sennheiser e835",
+     "body": "SM58: industry-standard, very durable. e835: brighter top end, lower handling noise. Recommend SM58 for live worship; e835 for spoken-word.", "published": True},
+    {"category": "FAQ", "title": "Treatment vs Soundproofing?",
+     "body": "Treatment improves sound INSIDE a room. Soundproofing stops sound from passing THROUGH walls. Churches need treatment; studios often need both.", "published": True},
+    {"category": "Troubleshooting", "title": "Feedback during worship",
+     "body": "Check mic placement vs monitors. Engage HPF below 80Hz. Use EQ to notch ringing freq. Consider in-ear monitors.", "published": True},
+    {"category": "Competitor", "title": "Why NMP vs Online Stores",
+     "body": "Online stores cannot do site surveys, acoustic measurement, installation, training, or AMC. NMP provides full lifecycle support.", "published": True},
+    {"category": "Sales Talk", "title": "Opening a Church Conversation",
+     "body": "Ask: How did Sunday service feel? Could everyone hear clearly? When was the last system upgrade?", "published": True},
+    {"category": "Installation", "title": "Auditorium Install Checklist",
+     "body": "Cable runs, conduit, rigging certification, power isolation, equipment rack, signal flow diagram, commissioning report, customer training.", "published": True},
 ]
 
-TRAINING_MODULES = [
-    {"id": "t1", "title": "NMP Sales Process 101", "category": "Sales", "duration": "20 min",
-     "description": "Lead-centric selling. Site visit discipline, GPS, photos, follow-up cadence."},
-    {"id": "t2", "title": "Pro Audio Basics", "category": "Product", "duration": "45 min",
-     "description": "Microphones, speakers, mixers, signal flow, gain staging, dB scale."},
-    {"id": "t3", "title": "Church Audio Masterclass", "category": "Product", "duration": "30 min",
-     "description": "Worship audio needs, contemporary vs traditional, monitoring, live streaming."},
-    {"id": "t4", "title": "Quotation Writing", "category": "Sales", "duration": "15 min",
-     "description": "Structuring quotes, discount discipline, GST, payment terms."},
-    {"id": "t5", "title": "Installation SOP", "category": "Technical", "duration": "60 min",
-     "description": "Site preparation, safety, rigging, commissioning, handover."},
+DEFAULT_TRAINING = [
+    {"title": "NMP Sales Process 101", "category": "Sales", "duration": "20 min",
+     "description": "Lead-centric selling. Site visit discipline, GPS, photos, follow-up cadence.",
+     "video_url": "", "pdf_url": "",
+     "quiz": [
+         {"q": "What is the single source of truth in NMP?", "options": ["Quotation", "Lead", "Task", "Photo"], "answer": 1},
+         {"q": "When is GPS verification mandatory?", "options": ["Never", "For Product Sale only", "When Visit Requirement is Mandatory", "Optional always"], "answer": 2},
+         {"q": "Maximum lead health score?", "options": ["50", "75", "100", "120"], "answer": 2},
+     ]},
+    {"title": "Pro Audio Basics", "category": "Product", "duration": "45 min",
+     "description": "Microphones, speakers, mixers, signal flow, gain staging, dB scale.",
+     "video_url": "", "pdf_url": "",
+     "quiz": [
+         {"q": "A dynamic mic uses a:", "options": ["Battery", "Moving coil", "Crystal", "LED"], "answer": 1},
+         {"q": "dB scale is:", "options": ["Linear", "Logarithmic", "Exponential", "Random"], "answer": 1},
+         {"q": "Best mic for live vocals (durable)?", "options": ["SM58", "Studio condenser", "Lavalier", "Boundary"], "answer": 0},
+     ]},
+    {"title": "Church Audio Masterclass", "category": "Product", "duration": "30 min",
+     "description": "Worship audio needs, contemporary vs traditional, monitoring, live streaming.",
+     "video_url": "", "pdf_url": "",
+     "quiz": [
+         {"q": "Reverb in a church is best treated with:", "options": ["More speakers", "Acoustic treatment", "Compressors", "Subwoofers"], "answer": 1},
+         {"q": "In-ear monitors solve:", "options": ["Bass response", "Stage feedback & mix", "Reverb", "Power loss"], "answer": 1},
+     ]},
+    {"title": "Quotation Writing", "category": "Sales", "duration": "15 min",
+     "description": "Structuring quotes, discount discipline, GST, payment terms.",
+     "video_url": "", "pdf_url": "",
+     "quiz": [
+         {"q": "Standard GST on pro-audio products in India?", "options": ["5%", "12%", "18%", "28%"], "answer": 2},
+         {"q": "NMP default advance is:", "options": ["10%", "25%", "50%", "100%"], "answer": 2},
+     ]},
+    {"title": "Installation SOP", "category": "Technical", "duration": "60 min",
+     "description": "Site preparation, safety, rigging, commissioning, handover.",
+     "video_url": "", "pdf_url": "",
+     "quiz": [
+         {"q": "Rigging certification is:", "options": ["Optional", "Mandatory for flown speakers", "For mics only", "Customer choice"], "answer": 1},
+     ]},
 ]
+
+# Playbooks CRUD
+class PlaybookIn(BaseModel):
+    category: str
+    discovery_questions: List[str] = []
+    objections: List[dict] = []
+    products: List[str] = []
+    checklist: List[str] = []
+    archived: bool = False
 
 @api.get("/playbooks")
 async def get_playbooks(user: dict = Depends(get_current_user)):
-    return PLAYBOOKS
+    pbs = await db.playbooks.find({"archived": {"$ne": True}}).to_list(200)
+    return [serialize(p) for p in pbs]
+
+@api.post("/playbooks")
+async def create_playbook(body: PlaybookIn, user: dict = Depends(require_roles("super_admin", "admin"))):
+    doc = body.model_dump()
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.playbooks.insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    return serialize(doc)
+
+@api.put("/playbooks/{pb_id}")
+async def update_playbook(pb_id: str, body: dict, user: dict = Depends(require_roles("super_admin", "admin"))):
+    body.pop("_id", None); body.pop("id", None)
+    await db.playbooks.update_one({"_id": ObjectId(pb_id)}, {"$set": body})
+    p = await db.playbooks.find_one({"_id": ObjectId(pb_id)})
+    return serialize(p)
+
+@api.delete("/playbooks/{pb_id}")
+async def delete_playbook(pb_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.playbooks.delete_one({"_id": ObjectId(pb_id)})
+    return {"ok": True}
+
+# Knowledge CRUD
+class KnowledgeIn(BaseModel):
+    category: str
+    title: str
+    body: str
+    published: bool = True
 
 @api.get("/knowledge")
 async def get_knowledge(user: dict = Depends(get_current_user)):
-    return KNOWLEDGE_HUB
+    items = await db.knowledge.find({"published": True}).sort("created_at", -1).to_list(500)
+    return [serialize(i) for i in items]
+
+@api.post("/knowledge")
+async def create_knowledge(body: KnowledgeIn, user: dict = Depends(require_roles("super_admin", "admin"))):
+    doc = body.model_dump()
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.knowledge.insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    return serialize(doc)
+
+@api.put("/knowledge/{k_id}")
+async def update_knowledge(k_id: str, body: dict, user: dict = Depends(require_roles("super_admin", "admin"))):
+    body.pop("_id", None); body.pop("id", None)
+    await db.knowledge.update_one({"_id": ObjectId(k_id)}, {"$set": body})
+    k = await db.knowledge.find_one({"_id": ObjectId(k_id)})
+    return serialize(k)
+
+@api.delete("/knowledge/{k_id}")
+async def delete_knowledge(k_id: str, user: dict = Depends(require_roles("super_admin", "admin"))):
+    await db.knowledge.delete_one({"_id": ObjectId(k_id)})
+    return {"ok": True}
+
+# Training (LMS)
+class TrainingIn(BaseModel):
+    title: str
+    category: str
+    duration: str = ""
+    description: str = ""
+    video_url: str = ""
+    pdf_url: str = ""
+    quiz: List[dict] = []
 
 @api.get("/training")
 async def get_training(user: dict = Depends(get_current_user)):
-    return TRAINING_MODULES
+    items = await db.training.find().to_list(200)
+    # attach progress for current user
+    out = []
+    for t in items:
+        t = serialize(t)
+        p = await db.training_progress.find_one({"training_id": t["id"], "user_id": user["id"]})
+        t["progress"] = serialize(p) if p else {"status": "Not Started", "score": 0}
+        out.append(t)
+    return out
+
+@api.post("/training")
+async def create_training(body: TrainingIn, user: dict = Depends(require_roles("super_admin", "admin"))):
+    doc = body.model_dump()
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.training.insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    return serialize(doc)
+
+@api.post("/training/{t_id}/submit-quiz")
+async def submit_quiz(t_id: str, body: dict, user: dict = Depends(get_current_user)):
+    t = await db.training.find_one({"_id": ObjectId(t_id)})
+    if not t: raise HTTPException(404, "Not found")
+    answers = body.get("answers", [])
+    quiz = t.get("quiz", [])
+    correct = sum(1 for i, q in enumerate(quiz) if i < len(answers) and answers[i] == q.get("answer"))
+    total = len(quiz)
+    score = round(correct / total * 100, 1) if total else 0
+    passed = score >= 70
+    cert_number = ""
+    if passed:
+        cert_number = f"NMP-CERT-{datetime.now().year}-{secrets.token_hex(3).upper()}"
+    progress = {
+        "training_id": t_id, "user_id": user["id"], "user_name": user["name"],
+        "status": "Certified" if passed else "Failed",
+        "score": score, "answers": answers,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "certificate_number": cert_number,
+    }
+    await db.training_progress.update_one(
+        {"training_id": t_id, "user_id": user["id"]},
+        {"$set": progress}, upsert=True
+    )
+    return {"score": score, "passed": passed, "certificate_number": cert_number,
+            "training_title": t.get("title")}
+
+@api.get("/training/{t_id}/certificate")
+async def get_certificate(t_id: str, user: dict = Depends(get_current_user)):
+    p = await db.training_progress.find_one({"training_id": t_id, "user_id": user["id"]})
+    if not p or p.get("status") != "Certified":
+        raise HTTPException(404, "No certificate found")
+    t = await db.training.find_one({"_id": ObjectId(t_id)})
+    return {"certificate_number": p.get("certificate_number"),
+            "user_name": user["name"], "user_id": user["id"],
+            "training_title": t.get("title"),
+            "score": p.get("score"),
+            "issue_date": p.get("completed_at", "").split("T")[0]}
+
+# Stale quotation nudge
+@api.post("/quotations/run-stale-nudge")
+async def run_stale_nudge(user: dict = Depends(require_roles("super_admin", "admin", "sales_manager"))):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    stale = await db.quotations.find({"status": "Sent", "created_at": {"$lt": cutoff}}).to_list(500)
+    created = 0
+    for q in stale:
+        # Skip if a nudge task already exists
+        existing = await db.tasks.find_one({"lead_id": q["lead_id"],
+                                            "title": {"$regex": f"^Follow-up: {q['quotation_number']}"}})
+        if existing: continue
+        await db.tasks.insert_one({
+            "lead_id": q["lead_id"],
+            "title": f"Follow-up: {q['quotation_number']} pending >3 days",
+            "description": f"Quotation {q['quotation_number']} for INR {q.get('totals',{}).get('total',0)} has been Sent but not actioned.",
+            "task_type": "Follow-Up",
+            "assigned_to": q.get("created_by", ""),
+            "status": "Open",
+            "created_by": user["id"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        created += 1
+    return {"stale_count": len(stale), "tasks_created": created}
 
 # ---------- Wiring ----------
 app.include_router(api)
@@ -729,6 +985,7 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.leads.create_index("assigned_to")
     await db.leads.create_index("status")
+    await db.login_history.create_index("user_id")
     if await db.users.count_documents({"role": "super_admin"}) == 0:
         await db.users.insert_one({
             "email": ADMIN_EMAIL.lower(),
@@ -739,6 +996,28 @@ async def startup():
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
         logger.info(f"Seeded super admin: {ADMIN_EMAIL}")
+    # Seed playbooks
+    if await db.playbooks.count_documents({}) == 0:
+        for pb in DEFAULT_PLAYBOOKS:
+            d = dict(pb)
+            d.pop("id", None)
+            d["created_at"] = datetime.now(timezone.utc).isoformat()
+            await db.playbooks.insert_one(d)
+        logger.info("Seeded default playbooks")
+    # Seed knowledge
+    if await db.knowledge.count_documents({}) == 0:
+        for k in DEFAULT_KNOWLEDGE:
+            d = dict(k)
+            d["created_at"] = datetime.now(timezone.utc).isoformat()
+            await db.knowledge.insert_one(d)
+        logger.info("Seeded default knowledge")
+    # Seed training
+    if await db.training.count_documents({}) == 0:
+        for t in DEFAULT_TRAINING:
+            d = dict(t)
+            d["created_at"] = datetime.now(timezone.utc).isoformat()
+            await db.training.insert_one(d)
+        logger.info("Seeded default training")
 
 @app.on_event("shutdown")
 async def shutdown():

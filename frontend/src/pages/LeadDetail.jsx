@@ -13,7 +13,7 @@ import {
 import {
   ArrowLeft, MapPin, Phone, EnvelopeSimple, Buildings, Plus,
   Receipt, Camera, ClipboardText, Clock, FileText, NavigationArrow,
-  CheckCircle, ChatCircle, PhoneCall, Note,
+  CheckCircle, ChatCircle, PhoneCall, Note, Trophy,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -42,12 +42,29 @@ export default function LeadDetail() {
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [id]);
 
+  const [closureOpen, setClosureOpen] = useState(false);
+  const [closureType, setClosureType] = useState("");
+
   if (!lead) return <div className="p-8 text-zinc-500">Loading…</div>;
 
   const updateStatus = async (newStatus) => {
+    if (newStatus === "Won" && !lead.closure_type) {
+      setClosureOpen(true);
+      return;
+    }
     try {
       await http.put(`/leads/${id}`, { status: newStatus });
       toast.success("Status updated");
+      refresh();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
+  const confirmWon = async () => {
+    if (!closureType) return toast.error("Please select closure type");
+    try {
+      await http.put(`/leads/${id}`, { status: "Won", closure_type: closureType });
+      toast.success("Marked as Won");
+      setClosureOpen(false); setClosureType("");
       refresh();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
@@ -90,6 +107,25 @@ export default function LeadDetail() {
       </div>
 
       <div className="p-6 lg:p-8">
+        <Dialog open={closureOpen} onOpenChange={setClosureOpen}>
+          <DialogContent className="rounded-sm max-w-md" data-testid="closure-type-modal">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><Trophy size={20} className="text-emerald-600" weight="fill" />Mark as Won</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-zinc-600">Closure type is mandatory before marking a lead as Won. How was this deal closed?</p>
+              <Select value={closureType} onValueChange={setClosureType}>
+                <SelectTrigger className="rounded-sm" data-testid="closure-type-select"><SelectValue placeholder="Select closure type" /></SelectTrigger>
+                <SelectContent>
+                  {["Site Visit","Phone Call","WhatsApp","Virtual Meeting","Email Closure"].map((c)=><SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button onClick={confirmWon} className="bg-emerald-600 hover:bg-emerald-700 rounded-sm w-full" data-testid="confirm-won-btn">
+                Confirm &amp; Mark Won
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         <Tabs defaultValue="overview">
           <TabsList className="bg-white border border-zinc-200 rounded-sm h-auto p-0 flex-wrap" data-testid="lead-tabs">
             {["overview","activities","site","photos","tasks","quotations","timeline"].map((t) => (
@@ -535,6 +571,37 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
     doc.save(`${q.quotation_number}.pdf`);
   };
 
+  const shareEmail = (q) => {
+    const subject = encodeURIComponent(`Quotation ${q.quotation_number} from New Music Palace`);
+    const body = encodeURIComponent(
+      `Dear ${lead.contact_person || lead.lead_name},\n\n` +
+      `Please find attached quotation ${q.quotation_number} dated ${new Date(q.created_at).toLocaleDateString()}.\n\n` +
+      `Grand Total: INR ${q.totals.total.toFixed(2)}\n` +
+      `Items: ${q.items.length}\n` +
+      `Status: ${q.status}\n\n` +
+      `Terms: ${q.terms || ""}\n\n` +
+      `Reply or call to confirm.\n\nNew Music Palace`
+    );
+    const to = lead.email || "";
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+  };
+
+  const shareWhatsApp = (q) => {
+    const msg = encodeURIComponent(
+      `*Quotation ${q.quotation_number}*\n` +
+      `New Music Palace\n\n` +
+      `Hi ${lead.contact_person || lead.lead_name},\n` +
+      `Sharing your quotation:\n` +
+      `• Items: ${q.items.length}\n` +
+      `• Grand Total: INR ${q.totals.total.toFixed(2)}\n` +
+      `• Date: ${new Date(q.created_at).toLocaleDateString()}\n\n` +
+      `Reply YES to confirm or call us back.`
+    );
+    const phone = (lead.mobile || "").replace(/\D/g, "");
+    const url = phone ? `https://wa.me/${phone.length === 10 ? "91" + phone : phone}?text=${msg}` : `https://wa.me/?text=${msg}`;
+    window.open(url, "_blank");
+  };
+
   const inrShort = (n) => "INR " + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
   const STATUSES = ["Draft", "Sent", "Viewed", "Negotiation", "Approved", "Rejected"];
@@ -649,6 +716,12 @@ const QuotationPanel = ({ lead, quots, onDone }) => {
               </Select>
               <Button onClick={()=>downloadPDF(q)} variant="outline" size="sm" className="rounded-sm" data-testid={`download-pdf-${q.id}`}>
                 <FileText size={14} className="mr-1" /> PDF
+              </Button>
+              <Button onClick={()=>shareEmail(q)} variant="outline" size="sm" className="rounded-sm" data-testid={`email-q-${q.id}`} title="Share via Email">
+                <EnvelopeSimple size={14} />
+              </Button>
+              <Button onClick={()=>shareWhatsApp(q)} variant="outline" size="sm" className="rounded-sm hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300" data-testid={`whatsapp-q-${q.id}`} title="Share via WhatsApp">
+                <ChatCircle size={14} />
               </Button>
             </div>
           </div>
