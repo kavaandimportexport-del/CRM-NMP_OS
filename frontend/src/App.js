@@ -1,56 +1,45 @@
-import { useEffect } from "react";
-import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import { Toaster } from "sonner";
+import { AuthProvider } from "@/context/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import AppShell from "@/components/AppShell";
+import Login from "@/pages/Login";
+import InviteAccept from "@/pages/InviteAccept";
+import Dashboard from "@/pages/Dashboard";
+import Leads from "@/pages/Leads";
+import LeadDetail from "@/pages/LeadDetail";
+import Tasks from "@/pages/Tasks";
+import Inventory from "@/pages/Inventory";
+import Employees from "@/pages/Employees";
+import Playbooks from "@/pages/Playbooks";
+import Training from "@/pages/Training";
+import Knowledge from "@/pages/Knowledge";
+import Reports from "@/pages/Reports";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const Shell = ({ children }) => (
+  <ProtectedRoute><AppShell>{children}</AppShell></ProtectedRoute>
+);
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+export default function App() {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
+        <Toaster position="top-right" richColors />
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
+          <Route path="/login" element={<Login />} />
+          <Route path="/invite/:token" element={<InviteAccept />} />
+          <Route path="/" element={<Shell><Dashboard /></Shell>} />
+          <Route path="/leads" element={<Shell><Leads /></Shell>} />
+          <Route path="/leads/:id" element={<Shell><LeadDetail /></Shell>} />
+          <Route path="/tasks" element={<Shell><Tasks /></Shell>} />
+          <Route path="/inventory" element={<Shell><Inventory /></Shell>} />
+          <Route path="/employees" element={<Shell><Employees /></Shell>} />
+          <Route path="/playbooks" element={<Shell><Playbooks /></Shell>} />
+          <Route path="/training" element={<Shell><Training /></Shell>} />
+          <Route path="/knowledge" element={<Shell><Knowledge /></Shell>} />
+          <Route path="/reports" element={<Shell><Reports /></Shell>} />
         </Routes>
-      </BrowserRouter>
-    </div>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
-
-export default App;
